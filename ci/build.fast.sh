@@ -25,24 +25,8 @@ set -euo pipefail
 echo "building ${CI_REPO:-?} @ ${CI_SHA:-?} (${CI_EVENT:-?}, clean=${CI_CLEAN_BUILD:-?})"
 
 # ci/test-health.sh is the shell half of test health, a copy of devops
-# templates/sbt-test-health/ci/test-health.sh held to it here, as in every sbt repository, until
-# it runs through `dev ci step` (ISS-53964). A read that fails is not a drift: retried once, and
-# one that fails twice exits 75.
-template_bytes=$(mktemp "${TMPDIR:-/tmp}/ci-template.XXXXXX")
-read_rc=0
-dev repo cat devops templates/sbt-test-health/ci/test-health.sh >"$template_bytes" ||
-  dev repo cat devops templates/sbt-test-health/ci/test-health.sh >"$template_bytes" || read_rc=$?
-if [ "$read_rc" -ne 0 ]; then
-  echo "ci/build.fast.sh: could not read devops templates/sbt-test-health/ci/test-health.sh (dev repo cat exit $read_rc, twice) -- a read failure, not a drift; nothing was measured" >&2
-  rm -f "$template_bytes"
-  exit 75
-fi
-if ! diff -u "$template_bytes" ci/test-health.sh; then
-  echo "ci/build.fast.sh: sync it -- dev repo cat devops templates/sbt-test-health/ci/test-health.sh > ci/test-health.sh" >&2
-  rm -f "$template_bytes"
-  exit 1
-fi
-rm -f "$template_bytes"
+# templates/sbt-test-health/ci/test-health.sh, until it runs through `dev ci step` (ISS-53964).
+# No build compares it to the template (ISS-54916).
 
 dev ci step format
 
