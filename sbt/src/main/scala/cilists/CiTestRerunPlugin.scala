@@ -22,13 +22,16 @@ import scala.util.control.NonFatal
   *
   * Each subproject's failed specs rerun as one `testOnly`, which runs the same `Tests.Setup` and the
   * same `Tests.Filter` as `test`. A green `testOnly` makes every spec in it a flake; a red one is
-  * split by the reports the rerun wrote, and a spec whose report the rerun did not write failed
-  * again, since nothing says it passed.
+  * split by the reports the rerun wrote, in every report directory, and a spec whose report the
+  * rerun did not write failed again, since nothing says it passed.
   *
   * BEFORE A RERUN, each spec's report is kept as `FIRST-<suite>.xml` beside it: the rerun rewrites
   * `TEST-<suite>.xml`, and the fleet's test ledger reads a flaked spec's first-run seconds, failed
   * tests and failure signature from the kept copy. A copy that fails costs the ledger that detail and
-  * nothing else.
+  * nothing else. The copy is kept beside EVERY `TEST-` report the first run wrote: the subproject's
+  * `target/test-reports`, where sbt's own JUnit reporter writes, and each directory a ScalaTest `-u`
+  * argument in `Test / testOptions` names, which is the one a build's `# ci-test-reports:` glob
+  * declares. A `FIRST-` copy outside that glob is one the ledger never reads (ISS-59817).
   *
   * `ci-test-phase: <n>s` is the wall time of the suite alone, before any rerun: a repository's slow
   * ceiling is a share of it, and a rerun is not the phase every pull request waits on.
@@ -74,6 +77,31 @@ object CiTestRerunPlugin extends AutoPlugin {
   def failedSpecs(output: Tests.Output): Option[Seq[String]] = {
     val failed = output.events.toSeq.collect { case (spec, r) if r.result != TestResult.Passed => spec }.sorted
     if (output.overall != TestResult.Passed && failed.isEmpty) None else Some(failed)
+  }
+
+  /** Every directory a subproject's test run writes `TEST-<suite>.xml` into: `sbtReports`, sbt's
+    * own JUnit reporter's, then each directory a ScalaTest `-u` argument names, a relative one
+    * resolved against `workingDirectory`, the directory the tests run in. Distinct, in that order.
+    */
+  def reportDirectories(sbtReports: File, options: Seq[TestOption], workingDirectory: File): Seq[File] = {
+    val scalaTest = options.flatMap {
+      case Tests.Argument(framework, args) if framework.forall(_ == TestFrameworks.ScalaTest) =>
+        args.sliding(2).collect { case Seq("-u", dir) => dir }.toSeq
+      case _ => Nil
+    }
+    val declared = scalaTest.map { dir =>
+      val f = new File(dir)
+      if (f.isAbsolute) f else new File(workingDirectory, dir)
+    }
+    (sbtReports +: declared).map(f => f.toPath.toAbsolutePath.normalize.toFile).distinct
+  }
+
+  /** Whether a spec passed its rerun, from the reports the rerun wrote since `since`: at least one,
+    * and every one of them green.
+    */
+  def rerunPassed(reports: Seq[File], since: Long): Boolean = {
+    val fresh = reports.filter(r => r.isFile && r.lastModified() >= since - 1000)
+    fresh.nonEmpty && fresh.forall(r => CiTestLists.reportPassed(IO.read(r)))
   }
 
   private def attempt[T](run: => (State, T)): Option[(State, T)] =
@@ -122,12 +150,22 @@ object CiTestRerunPlugin extends AutoPlugin {
   private def rerun(state: State, project: String, specs: Seq[String]): (State, Seq[(String, Boolean)]) = {
     val extracted = Project.extract(state)
     val ref = extracted.structure.allProjectRefs.find(_.project == project).getOrElse(sys.error(s"no project $project"))
-    val reports = extracted.get(ref / target) / "test-reports"
+    val forked = extracted.getOpt(ref / Test / fork).getOrElse(false)
+    // A forked test JVM runs in the subproject's base directory, an unforked one in sbt's own.
+    val workingDirectory = if (forked) extracted.get(ref / baseDirectory) else new File(sys.props("user.dir"))
+    val dirs = reportDirectories(
+      extracted.get(ref / target) / "test-reports",
+      attempt(extracted.runTask(ref / Test / testOptions, state)).map(_._2).getOrElse(Nil),
+      workingDirectory
+    )
     specs.foreach { spec =>
-      val report = reports / CiTestLists.reportName(spec)
-      try { if (report.isFile) IO.copyFile(report, reports / s"FIRST-$spec.xml") }
-      catch {
-        case NonFatal(e) => println(s"ci-rerun: the first run of $spec could not be kept: ${e.getMessage}")
+      dirs.foreach { dir =>
+        val report = dir / CiTestLists.reportName(spec)
+        try { if (report.isFile) IO.copyFile(report, dir / s"FIRST-$spec.xml") }
+        catch {
+          case NonFatal(e) =>
+            println(s"ci-rerun: the first run of $spec could not be kept in $dir: ${e.getMessage}")
+        }
       }
     }
     println(s"ci-rerun: $project/testOnly ${specs.mkString(" ")}")
@@ -135,12 +173,7 @@ object CiTestRerunPlugin extends AutoPlugin {
     attempt(extracted.runInputTask(ref / Test / testOnly, specs.mkString(" ", " ", ""), state)) match {
       case Some((next, _)) => (next, specs.map(_ -> true))
       case None =>
-        val answered = specs.map { spec =>
-          val report = reports / CiTestLists.reportName(spec)
-          val passed = report.isFile && report.lastModified() >= since - 1000 &&
-            CiTestLists.reportPassed(IO.read(report))
-          spec -> passed
-        }
+        val answered = specs.map(spec => spec -> rerunPassed(dirs.map(_ / CiTestLists.reportName(spec)), since))
         (state, answered)
     }
   }
