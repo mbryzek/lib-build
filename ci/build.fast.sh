@@ -24,12 +24,12 @@ set -euo pipefail
 
 echo "building ${CI_REPO:-?} @ ${CI_SHA:-?} (${CI_EVENT:-?}, clean=${CI_CLEAN_BUILD:-?})"
 
-# ci/test-health.sh is the shell half of test health, a copy of devops
-# templates/sbt-test-health/ci/test-health.sh, until it runs through `dev ci step` (ISS-53964).
-# No build compares it to the template (ISS-54916).
-
 dev ci step format
 
-source ci/test-health.sh
+# The shell half of test health is devops templates/sbt-test-health/ci/test-health.sh, sourced
+# from the devops release and never copied. A release that cannot hand it over exits 75: the box,
+# not the branch.
+ci_th=$(dev ci template sbt-test-health/ci/test-health.sh) || exit 75
+source "$ci_th"
 ci_test_health_sbt
 sbt -Dsbt.log.noformat=true "${ci_sbt_test_commands[@]}"
