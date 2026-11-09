@@ -17,7 +17,7 @@
 //     declaring a one-line subclass in its own tests. Every dependency is `Provided`, so a suite
 //     exercises the consumer's own resolution.
 
-ThisBuild / version := "0.0.4"
+ThisBuild / version := "0.0.5"
 
 // Publishing coordinates and metadata, the guava pin and the browser-stack exclusions, from this
 // repository's own sources (project/build.sbt compiles `sbt/` into the meta-build).
