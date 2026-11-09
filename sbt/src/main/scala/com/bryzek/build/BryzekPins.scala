@@ -181,4 +181,21 @@ object BryzekPins {
     "ch.qos.logback" % "logback-classic" % logbackVersion,
     "ch.qos.logback" % "logback-core" % logbackVersion,
   )
+
+  // jline and log4j-api reach a build through sbt itself, which is the only thing that puts them on
+  // this repository's classpath. Both are floors set by advisories: jline-reader and jline-builtins
+  // below 3.30.15 carry three ReDoS advisories (GHSA-5q95-hrpc-m3w3, GHSA-ph9c-7hw9-vhhw,
+  // GHSA-r2xf-8xr9-62gw), and log4j-api below 2.25.5 encodes non-finite floating-point values
+  // wrongly when serializing a MapMessage to JSON (GHSA-qv9r-c865-cp47).
+  val jlineVersion = "3.30.15"
+  val log4jVersion = "2.25.5"
+
+  val jline: Seq[ModuleID] = Seq(
+    "org.jline" % "jline-reader" % jlineVersion,
+    "org.jline" % "jline-builtins" % jlineVersion,
+  )
+
+  val log4j: Seq[ModuleID] = Seq(
+    "org.apache.logging.log4j" % "log4j-api" % log4jVersion,
+  )
 }
