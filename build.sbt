@@ -27,7 +27,8 @@ ThisBuild / scalaVersion := "3.8.4"
 
 ThisBuild / resolvers += "Bryzek Maven repository" at "https://maven.bryzek.com"
 
-ThisBuild / dependencyOverrides ++= BryzekPins.jackson2 ++ BryzekPins.jackson3 ++ BryzekPins.logback
+ThisBuild / dependencyOverrides ++= BryzekPins.jackson2 ++ BryzekPins.jackson3 ++ BryzekPins.logback ++
+  BryzekPins.jline ++ BryzekPins.log4j
 
 // Each subproject's JUnit XML lands in its own target/test-reports, which `# ci-test-reports:` in
 // ci/build.fast.sh names.
