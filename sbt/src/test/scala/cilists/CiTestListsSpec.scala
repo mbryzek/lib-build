@@ -181,4 +181,34 @@ class CiTestListsSpec extends AnyFunSpec with Matchers {
       )
     }
   }
+  describe("proveEvery") {
+    it("proves every spec after a red one and names each red spec in plan order (ISS-79457)") {
+      val plan = Seq("a.ASpec", "b.BSpec", "c.CSpec", "d.DSpec")
+      val red = Set("a.ASpec", "c.CSpec")
+      val (proved, failed) = CiTestLists.proveEvery(Vector.empty[String], plan) { (seen, spec) =>
+        (seen :+ spec, !red(spec))
+      }
+      proved mustBe plan
+      failed mustBe Seq("a.ASpec", "c.CSpec")
+    }
+
+    it("answers no failed spec when every proof passed") {
+      CiTestLists.proveEvery(0, Seq("a.ASpec", "b.BSpec"))((n, _) => (n + 1, true)) mustBe ((2, Seq.empty))
+    }
+  }
+
+  describe("proveRuns") {
+    it("stops one spec's runs at its first failed run") {
+      val attempts = CiTestLists.proofAttempts(5, 3)
+      val (ran, passed) = CiTestLists.proveRuns(Vector.empty[(String, Int)], attempts) { (seen, attempt) =>
+        (seen :+ attempt, attempt != ("alone" -> 2))
+      }
+      ran mustBe Seq("alone" -> 1, "alone" -> 2)
+      passed mustBe false
+    }
+
+    it("runs every attempt when each passes") {
+      CiTestLists.proveRuns(0, CiTestLists.proofAttempts(5, 3))((n, _) => (n + 1, true)) mustBe ((8, true))
+    }
+  }
 }

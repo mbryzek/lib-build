@@ -16,7 +16,7 @@ import scala.util.control.NonFatal
   *   - `ciListsUnknown`, which prints `ci-lists: unknown <spec>` for a listed spec no subproject
   *     defines, and never fails, since the build script runs it ahead of `test` in one invocation;
   *   - `ciProof [<alone> <beside>]`, which runs each `proof` spec `<alone>` times alone and `<beside>` times with
-  *     the rest of its subproject's specs, leaves a report per run and fails if any run failed.
+  *     the rest of its subproject's specs, leaves a report per run, proves every spec even after one failed, and fails if any run failed.
   *     Each run is named in the system property `CiTestLists.ProofRunProperty` while it runs, so a
   *     repository whose test tasks each open a fresh database can keep one across the alone runs.
   *
@@ -124,18 +124,15 @@ object CiTestListsPlugin extends AutoPlugin {
     }
   }
 
-  /** Stops at the first run that fails: one failed run is a red build, and the runs after it
-    * would spend up to an hour of a runner to say so again.
+  /** Proves every spec of the plan, a red one included, and fails at the end when any failed:
+    * [[CiTestLists.proveEvery]].
     */
   private def proveAll(state: State, plan: Seq[(String, String)], runs: (Int, Int)): State = {
-    val (last, failed) = plan.foldLeft((state, false)) {
-      case ((current, true), _) => (current, true)
-      case ((current, false), (project, spec)) =>
-        val (next, passed) = prove(current, project, spec, runs)
-        (next, !passed)
+    val (last, failed) = CiTestLists.proveEvery(state, plan) { case (current, (project, spec)) =>
+      prove(current, project, spec, runs)
     }
-    if (failed) {
-      println("ci-proof: FAILED")
+    if (failed.nonEmpty) {
+      println(s"ci-proof: FAILED ${failed.size} of ${plan.size} spec(s): ${failed.map(_._2).mkString(", ")}")
       last.fail
     } else {
       println(s"ci-proof: passed ${plan.size} spec(s), ${runs._1} alone and ${runs._2} beside each")
@@ -181,10 +178,7 @@ object CiTestListsPlugin extends AutoPlugin {
     IO.delete(Seq(aside, kept))
     if (reports.exists) IO.move(reports, aside)
     try {
-      attempts.foldLeft((state, true)) {
-        case ((current, true), (mode, index)) => run(mode, index, current)
-        case (stopped, _) => stopped
-      }
+      CiTestLists.proveRuns(state, attempts) { case (current, (mode, index)) => run(mode, index, current) }
     } finally {
       IO.delete(reports)
       if (aside.exists) IO.move(aside, reports)
