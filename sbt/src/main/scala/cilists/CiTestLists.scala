@@ -32,6 +32,31 @@ object CiTestLists {
   def proofAttempts(alone: Int, beside: Int): Seq[(String, Int)] =
     (1 to alone).map(i => ("alone", i)) ++ (1 to beside).map(i => ("load", i))
 
+  /** Runs `prove` on every spec of a proof plan, in order, and answers the state the last one left
+    * and the specs whose proof failed, in plan order.
+    *
+    * EVERY SPEC IS PROVED, A RED ONE INCLUDED (ISS-79457). A shard's proof is the only proof its
+    * specs get before the build lands them, and the fix step that greens a red shard re-runs its
+    * failed suites alone: a proof that stopped at its first red spec would land every spec after it
+    * unproved. Each spec's own runs still stop at its first failed run ([[proveRuns]]), so a red
+    * spec costs no more than its runs up to that one.
+    */
+  def proveEvery[S, P](state: S, plan: Seq[P])(prove: (S, P) => (S, Boolean)): (S, Seq[P]) =
+    plan.foldLeft((state, Vector.empty[P])) { case ((current, failed), item) =>
+      val (next, passed) = prove(current, item)
+      (next, if (passed) failed else failed :+ item)
+    }
+
+  /** Runs one spec's proof attempts in order and stops at the first that fails: one failed run is
+    * a red proof, and the runs after it would spend a runner to say so again. Answers the state the
+    * last run left and whether every run passed.
+    */
+  def proveRuns[S, A](state: S, attempts: Seq[A])(run: (S, A) => (S, Boolean)): (S, Boolean) =
+    attempts.foldLeft((state, true)) {
+      case ((current, true), attempt) => run(current, attempt)
+      case (stopped, _) => stopped
+    }
+
   /** The sbt JVM's system property that names the proof run under way, as [[proofRun]] writes it,
     * set by `ciProof` for the length of each run and cleared after it. Absent on every other run.
     *
