@@ -136,6 +136,34 @@ class CiTestListsSpec extends AnyFunSpec with Matchers {
     }
   }
 
+  describe("shard projects (ISS-80740)") {
+
+    it("reads the subprojects separated by spaces or commas") {
+      CiTestLists.shardProjects(Map(CiTestLists.ShardProjectsEnvVar -> " core api,jobs ")) mustBe Some(
+        Set("core", "api", "jobs")
+      )
+    }
+
+    it("reads every subproject when none is named") {
+      CiTestLists.shardProjects(Map.empty) mustBe None
+      CiTestLists.shardProjects(Map(CiTestLists.ShardProjectsEnvVar -> " , ")) mustBe None
+    }
+  }
+
+  describe("unknownProof") {
+
+    val two = lists.copy(proof = Set("core.FixedSpec", "api.FixedSpec"))
+
+    it("names every proof spec no subproject read defines on a whole build") {
+      CiTestLists.unknownProof(two, Set("core.FixedSpec"), None) mustBe Seq("api.FixedSpec")
+    }
+
+    it("names only the shard's own, so a proof spec another shard holds is not called unknown") {
+      CiTestLists.unknownProof(two, Set("core.FixedSpec"), Some(Set("core.FixedSpec"))) mustBe Nil
+      CiTestLists.unknownProof(two, Set.empty, Some(Set("core.FixedSpec"))) mustBe Seq("core.FixedSpec")
+    }
+  }
+
   describe("proof runs") {
 
     it("names the run under way as its mode, index and count") {
