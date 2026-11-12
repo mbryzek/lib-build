@@ -19,6 +19,8 @@ import scala.util.control.NonFatal
   *     the rest of its subproject's specs, leaves a report per run, proves every spec even after one failed, and fails if any run failed.
   *     Each run is named in the system property `CiTestLists.ProofRunProperty` while it runs, so a
   *     repository whose test tasks each open a fresh database can keep one across the alone runs.
+  *     On a shard it reads the suites of the subprojects `CI_SHARD_PROJECTS` names alone, so it
+  *     compiles nothing the shard's own suites did not.
   *
   * An AutoPlugin on every project, for the reason `TestDatabasePlugin` is one: a subproject added
   * next year must not be able to forget the filter, because forgetting it runs a quarantined spec.
@@ -80,6 +82,33 @@ object CiTestListsPlugin extends AutoPlugin {
   private def definedSpecs(state: State): Option[(State, Map[String, Set[String]])] =
     attempt(Project.extract(state).runTask(Global / ciDefinedSpecs, state))
 
+  /** The suites `ciProof` reads: every subproject's, or on a shard that names its subprojects
+    * ([[CiTestLists.ShardProjectsEnvVar]]) theirs alone. Reading a subproject's suites compiles its
+    * tests, so reading every one on a shard compiles the whole build a second time, which a
+    * developer machine's heap does not hold (ISS-80740). A named subproject this build does not
+    * have fails the proof, naming it.
+    */
+  private def proofSpecs(state: State, projects: Option[Set[String]]): Option[(State, Map[String, Set[String]])] =
+    projects match {
+      case None => definedSpecs(state)
+      case Some(ids) =>
+        val refs = Project.extract(state).structure.allProjectRefs.filter(ref => ids(ref.project))
+        val missing = ids -- refs.map(_.project)
+        if (missing.nonEmpty) {
+          println(
+            s"ci-proof: ${CiTestLists.ShardProjectsEnvVar} names no subproject ${missing.toSeq.sorted.mkString(", ")}"
+          )
+          None
+        } else
+          refs.sortBy(_.project).foldLeft(Option((state, Map.empty[String, Set[String]]))) {
+            case (Some((current, found)), ref) =>
+              attempt(Project.extract(current).runTask(ref / ciProjectSpecs, current)).map { case (next, entry) =>
+                (next, found + entry)
+              }
+            case (None, _) => None
+          }
+    }
+
   private def ciListsUnknown: Command = Command.command("ciListsUnknown") { state =>
     lists match {
       case None =>
@@ -111,15 +140,14 @@ object CiTestListsPlugin extends AutoPlugin {
         println("ci-proof: no proof specs")
         state
       case Some(l) =>
-        definedSpecs(state) match {
+        val shard = CiTestLists.shardSuites(sys.env)
+        proofSpecs(state, CiTestLists.shardProjects(sys.env)) match {
           case None => state.fail
           case Some((next, defined)) =>
-            CiTestLists
-              .unknown(l.copy(quarantined = Set.empty, slow = Set.empty), defined.values.flatten.toSet)
-              .foreach { spec =>
-                println(s"ci-lists: unknown $spec")
-              }
-            proveAll(next, CiTestLists.proofPlan(l, defined, CiTestLists.shardSuites(sys.env)), runs)
+            CiTestLists.unknownProof(l, defined.values.flatten.toSet, shard).foreach { spec =>
+              println(s"ci-lists: unknown $spec")
+            }
+            proveAll(next, CiTestLists.proofPlan(l, defined, shard), runs)
         }
     }
   }

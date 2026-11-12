@@ -164,6 +164,26 @@ object CiTestLists {
       parseShardSuites(new String(Files.readAllBytes(f.toPath), StandardCharsets.UTF_8))
     }
 
+  /** What a runner exports beside [[ShardSuitesEnvVar]]: the ids of the subprojects whose test tasks
+    * the shard runs, separated by spaces or commas. `ciProof` reads the suites of these subprojects
+    * alone, so a proof compiles what the shard's own suites compiled and never the rest of the
+    * build (ISS-80740). Unset, it reads every subproject's.
+    */
+  val ShardProjectsEnvVar: String = "CI_SHARD_PROJECTS"
+
+  /** The subprojects this run is one shard of, when `env` names them in [[ShardProjectsEnvVar]]. */
+  def shardProjects(env: Map[String, String]): Option[Set[String]] =
+    env
+      .get(ShardProjectsEnvVar)
+      .map(_.split("[\\s,]+").toSeq.map(_.trim).filter(_.nonEmpty).toSet)
+      .filter(_.nonEmpty)
+
+  /** The proof specs no subproject read defines: on a shard ([[shardSuites]]), only the shard's own,
+    * since the subprojects it reads ([[shardProjects]]) do not define a spec another shard proves.
+    */
+  def unknownProof(lists: Lists, defined: Set[String], shard: Option[Set[String]]): Seq[String] =
+    (lists.proof.filter(spec => shard.forall(_(spec))) -- defined).toSeq.sorted
+
   /** The report ScalaTest's JUnit reporter leaves for a suite. */
   def reportName(spec: String): String = s"TEST-$spec.xml"
 
