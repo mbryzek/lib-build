@@ -23,14 +23,65 @@ object CiTestLists {
   /** How many times a proof runs a spec with the rest of its subproject. */
   val ProofRunsBeside: Int = 3
 
-  /** The runs of one spec's proof, in the order they run: every run alone, then every run beside
-    * the rest of its subproject. Each is its mode, as [[proofReportName]] takes it, and its index
-    * from 1. Alone comes first so that the cheap runs find a flake before the subproject's suite
-    * is spent on it, and so that a build's passing `proof` rows can only number both halves
-    * together when both ran in full.
+  /** How many times a proof runs a spec alone with its forked test JVM under the CPU clamp
+    * ([[cpuClamp]]): devops' own, as its npm helper's `PROOF_RUNS_CLAMPED`. Platform's
+    * `TestHealthRules.fullPassingProof` counts [[ProofRunsAlone]] and [[ProofRunsBeside]] as a
+    * floor, so the clamped runs only add rows to a proof.
+    *
+    * A CLAMPED RUN IS THE SLOW RUNNER A SPEC RACING THE WALL CLOCK FLAKES ON, MADE EVERY TIME
+    * (ISS-96329). A spec that polls, sleeps or times out against real time passes on a quiet runner
+    * and fails on a busy one, so a proof that only runs it on whatever runner the build got releases
+    * it unfixed.
     */
-  def proofAttempts(alone: Int, beside: Int): Seq[(String, Int)] =
-    (1 to alone).map(i => ("alone", i)) ++ (1 to beside).map(i => ("load", i))
+  val ProofRunsClamped: Int = 2
+
+  /** How many times a proof runs a spec: alone, beside the rest of its subproject, and alone under
+    * the CPU clamp.
+    */
+  final case class ProofRuns(alone: Int, beside: Int, clamped: Int)
+
+  /** `ciProof`'s arguments, `[<alone> <beside> [<clamped>]]`: none is the proof's own counts, and
+    * two are the exact runs asked for, so they run no clamped run. Anything else is refused, naming
+    * it.
+    */
+  def proofRuns(args: Seq[String]): Either[String, ProofRuns] = {
+    val counts = args.map(a => if (a.nonEmpty && a.length <= 4 && a.forall(_.isDigit)) Some(a.toInt) else None)
+    counts match {
+      case Seq() => Right(ProofRuns(ProofRunsAlone, ProofRunsBeside, ProofRunsClamped))
+      case Seq(Some(alone), Some(beside)) => Right(ProofRuns(alone, beside, 0))
+      case Seq(Some(alone), Some(beside), Some(clamped)) => Right(ProofRuns(alone, beside, clamped))
+      case _ => Left(s"ciProof ${args.mkString(" ")}: not [<alone> <beside> [<clamped>]]")
+    }
+  }
+
+  /** The runs of one spec's proof, in the order they run: every run alone, every clamped run, then
+    * every run beside the rest of its subproject. Each is its mode, as [[proofReportName]] takes it,
+    * and its index from 1. Alone comes first so that the cheap runs find a flake before the
+    * subproject's suite is spent on it, and so that a build's passing `proof` rows can only number
+    * both halves together when both ran in full.
+    */
+  def proofAttempts(alone: Int, beside: Int, clamped: Int = 0): Seq[(String, Int)] =
+    (1 to alone).map(i => ("alone", i)) ++ (1 to clamped).map(i => ("clamped", i)) ++
+      (1 to beside).map(i => ("load", i))
+
+  /** The command a clamped run's forked test JVM is started under: macOS' background policy (the
+    * efficiency cores, throttled) or Linux's one core, whichever tool `exists` finds, as devops' npm
+    * and dune proofs choose it. Each tool exists on one of the two systems only, so the file is the
+    * system. None when neither is there, and the proof then runs no clamped run and says so.
+    */
+  def cpuClamp(exists: String => Boolean = path => new File(path).isFile): Option[Seq[String]] =
+    if (exists("/usr/sbin/taskpolicy")) Some(Seq("/usr/sbin/taskpolicy", "-b"))
+    else Seq("/usr/bin/taskset", "/bin/taskset").find(exists).map(taskset => Seq(taskset, "-c", "0"))
+
+  /** The `bin/java` a clamped run's fork is started with: a script that execs `java` under `clamp`,
+    * passing every argument through. sbt starts a forked test JVM as `<javaHome>/bin/java`, so a
+    * `javaHome` holding this script is how the fork, and everything it starts, runs clamped while
+    * nothing else does.
+    */
+  def clampedJava(clamp: Seq[String], java: String): String = {
+    def quote(word: String): String = "'" + word.replace("'", "'\\''") + "'"
+    "#!/bin/sh\nexec " + (clamp :+ java).map(quote).mkString(" ") + " \"$@\"\n"
+  }
 
   /** Runs `prove` on every spec of a proof plan, in order, and answers the state the last one left
     * and the specs whose proof failed, in plan order.
