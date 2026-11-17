@@ -1,0 +1,8 @@
+BuildDefinitionMarkerPlugin
+CiShardPlugin
+CompileCachePlugin
+CompileProfilePlugin
+ForkSafeTestFrameworkPlugin
+NoScaladocPlugin
+TestDatabasePlugin
+testimpact.TestImpactPlugin
