@@ -25,7 +25,14 @@ That brings, with nothing else to enable:
   `BryzekLibSettings.buildSettings("lib-util")`, and `.settings(BryzekLibSettings.rootSettings)`
   on the root project.
 - `CiTestListsPlugin` and `CiTestRerunPlugin` on every project: the `CI_TEST_LISTS` filter on
-  every test task, and the `ciListsUnknown`, `ciProof` and `ciTest` commands.
+  every test task, and the `ciListsUnknown`, `ciProof`, `ciTest` and `ciVerdict` commands.
+
+A build's whole test phase is one sbt start: `ciTest [--stop] [<subproject>...] [-- <subproject>...]`
+runs the named subprojects' tests (every subproject when none is named), reruns each failed spec once
+(`ci-flake:` when it passes, `ci-rerun: failed again:` when it does not) and runs the subprojects
+after `--` as a second phase. With `--stop` a spec that fails its rerun leaves the second phase unrun,
+named on a `ci-stopped:` line. `ciVerdict` is the finish of a split build: it reads every shard's
+`<subproject>/target/test-reports` and prints the whole test phase's verdict.
 
 It needs sbt 1.12.11 or later and sbt-scalafmt in the same meta-build.
 
