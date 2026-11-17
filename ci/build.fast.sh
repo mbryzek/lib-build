@@ -3,10 +3,11 @@
 # lib-build's build. READ devops/templates/ci/build.sh AND devops/docs/ci.md FIRST: landing this
 # file IS the enrolment, `set -euo pipefail` is not style, and the fleet posts the `ci` context.
 #
-# WHAT A GREEN HERE VOUCHES FOR: both artifacts compile, `lib-build-sbt` against the oldest sbt a
-# consumer runs and `lib-build-testkit` under the fleet's Scala 3 compiler gate; the test-health
-# rules and the AutoPlugin descriptor hold (`sbt/src/test`); and every pin suite passes against the
-# pins this build resolves (`testkit/src/test`). This build's own meta-build compiles `sbt/`'s
+# WHAT A GREEN HERE VOUCHES FOR: all three artifacts compile, `scala-build-sbt` against the oldest
+# sbt a consumer runs, `scala-build-app` against the sbt and Play sbt-plugin the applications run,
+# and `scala-build-testkit` under the fleet's Scala 3 compiler gate; the test-health rules and both
+# AutoPlugin descriptors hold (`sbt/src/test`, `app/src/test`); and every pin suite, the fork-safe
+# framework and agent, and the app module's sbt-free rules pass (`testkit/src/test`). This build's own meta-build compiles `sbt/`'s
 # sources (project/build.sbt), so the suite below runs through the very test-health plugins it
 # publishes.
 #
