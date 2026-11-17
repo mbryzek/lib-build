@@ -1,9 +1,9 @@
-# lib-build
+# scala-build
 
 What every Scala build on this fleet shares: the security pins, the lib-* build settings, the
 test-health sbt plugins, the build tooling of the Play applications, and the suites and test
-framework their tests run under. The repository is becoming `scala-build`, and its artifacts carry
-that name; `lib-build-sbt` and `lib-build-testkit` stay resolvable at their last version, 0.0.9.
+framework their tests run under. The repository was `lib-build`; `lib-build-sbt` and
+`lib-build-testkit` stay resolvable at their last version, 0.0.9.
 
 Every version is published to the Maven repository at https://maven.bryzek.com.
 

@@ -81,7 +81,7 @@ object Jackson3PinSuite {
   * leave the container null for the wrong reason and pass.
   *
   * ==Running it==
-  * Published in `lib-build-testkit`, every dependency `Provided`, so what it exercises is the
+  * Published in `scala-build-testkit`, every dependency `Provided`, so what it exercises is the
   * consuming build's own resolution and never a version this library brings. sbt runs only the
   * suites a project compiles itself, so a build runs this one by declaring it in its own tests,
   * under the name its test history already has:

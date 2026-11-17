@@ -5,8 +5,8 @@ import sbt._
 /** The security pins every Scala build on this fleet resolves against: Jackson 2, Jackson 3 and
   * logback.
   *
-  * Published in `lib-build-sbt` and reached from a build.sbt as `BryzekPins` through
-  * [[BryzekBuildPlugin]]'s `autoImport`. A build pins a version of lib-build in its
+  * Published in `scala-build-sbt` and reached from a build.sbt as `BryzekPins` through
+  * [[BryzekBuildPlugin]]'s `autoImport`. A build pins a version of scala-build in its
   * `project/plugins.sbt`, so an advisory bump is one edit here, one release, and one version bump
   * per consumer, each of which its own build proves.
   *
@@ -14,7 +14,7 @@ import sbt._
   * on the classpath of the builds that resolve logstash-logback-encoder 9 -- and how: as
   * `ThisBuild / dependencyOverrides`, which governs THAT build's resolution only (sbt writes no
   * `dependencyOverrides` into the published POM, so it imposes no floor on a consumer), or as a
-  * declared dependency, which does reach consumers. The pin suites in `lib-build-testkit`
+  * declared dependency, which does reach consumers. The pin suites in `scala-build-testkit`
   * (`com.bryzek.pins`) assert each pin as behaviour of the resolved jars, because every way a pin
   * can be wrong resolves cleanly and says nothing.
   */

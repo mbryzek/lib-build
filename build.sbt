@@ -1,9 +1,9 @@
-// lib-build: what every Scala build on this fleet shares, published to the Maven repository at
-// maven.bryzek.com and pinned by version in each consumer (ISS-53963). The repository is becoming
-// scala-build (design DES-102458, "Build tooling: scala-build"), and its artifacts carry that name;
-// `lib-build-sbt` and `lib-build-testkit` stay resolvable at their last version, 0.0.9.
+// scala-build: what every Scala build on this fleet shares, published to the Maven repository at
+// maven.bryzek.com and pinned by version in each consumer (ISS-53963). The repository was lib-build
+// (design DES-102458, "Build tooling: scala-build"); `lib-build-sbt` and `lib-build-testkit` stay
+// resolvable at their last version, 0.0.9.
 //
-// Three artifacts, released together by lib-build's rollout (`dev rollout --app lib-build`):
+// Three artifacts, released together by scala-build's rollout (`dev rollout --app scala-build`):
 //
 //   - `scala-build-sbt` (Scala 2.12, the meta-build's Scala): the security pins (`BryzekPins`), the
 //     shared lib-* settings (`BryzekLibSettings`) and the test-health plugins (`cilists`). Every
@@ -31,8 +31,8 @@ ThisBuild / version := "0.0.9"
 
 // Publishing coordinates and metadata, the guava pin and the browser-stack exclusions, from this
 // repository's own sources (project/build.sbt compiles `sbt/` into the meta-build). Named for the
-// repository as GitHub holds it, which the rename moves.
-BryzekLibSettings.buildSettings("lib-build")
+// repository as GitHub holds it.
+BryzekLibSettings.buildSettings("scala-build")
 
 ThisBuild / scalaVersion := "3.8.4"
 

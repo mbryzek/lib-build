@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 #
-# lib-build's build. READ devops/templates/ci/build.sh AND devops/docs/ci.md FIRST: landing this
+# scala-build's build. READ devops/templates/ci/build.sh AND devops/docs/ci.md FIRST: landing this
 # file IS the enrolment, `set -euo pipefail` is not style, and the fleet posts the `ci` context.
 #
 # WHAT A GREEN HERE VOUCHES FOR: all three artifacts compile, `scala-build-sbt` against the oldest
