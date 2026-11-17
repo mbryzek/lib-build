@@ -1,6 +1,9 @@
 package cilists
 
 import cilists.CiTestLists.Lists
+import java.nio.charset.StandardCharsets
+import java.nio.file.Files
+import sbt.io.IO
 import org.scalatest.funspec.AnyFunSpec
 import org.scalatest.matchers.must.Matchers
 
@@ -194,6 +197,54 @@ class CiTestListsSpec extends AnyFunSpec with Matchers {
       CiTestLists.reportName("core.FixedSpec") mustBe "TEST-core.FixedSpec.xml"
       CiTestLists.proofReportName("alone", 7, "core.FixedSpec") mustBe "PROOF-alone-07-core.FixedSpec.xml"
       CiTestLists.proofReportName("load", 20, "core.FixedSpec") mustBe "PROOF-load-20-core.FixedSpec.xml"
+    }
+
+    it("names a clamped run's report by its own mode") {
+      CiTestLists.proofReportName("clamped", 2, "core.FixedSpec") mustBe "PROOF-clamped-02-core.FixedSpec.xml"
+    }
+
+    it("runs the clamped runs after the alone runs and before the beside runs (ISS-96329)") {
+      CiTestLists.proofAttempts(2, 1, 2) mustBe Seq(
+        "alone" -> 1,
+        "alone" -> 2,
+        "clamped" -> 1,
+        "clamped" -> 2,
+        "load" -> 1,
+      )
+    }
+
+    it("reads ciProof's counts: none is 5, 3 and 2 clamped, two run no clamped run") {
+      CiTestLists.proofRuns(Nil) mustBe Right(CiTestLists.ProofRuns(alone = 5, beside = 3, clamped = 2))
+      CiTestLists.proofRuns(Seq("2", "1")) mustBe Right(CiTestLists.ProofRuns(alone = 2, beside = 1, clamped = 0))
+      CiTestLists.proofRuns(Seq("2", "1", "4")) mustBe Right(CiTestLists.ProofRuns(alone = 2, beside = 1, clamped = 4))
+      Seq(Seq("2"), Seq("2", "x"), Seq("-1", "3"), Seq("1", "2", "3", "4")).foreach { args =>
+        CiTestLists.proofRuns(args).isLeft mustBe true
+      }
+    }
+
+    it("clamps with whichever tool the machine has, and with none when it has neither") {
+      def on(files: String*) = CiTestLists.cpuClamp(files.toSet)
+      on("/usr/sbin/taskpolicy") mustBe Some(Seq("/usr/sbin/taskpolicy", "-b"))
+      on("/usr/bin/taskset") mustBe Some(Seq("/usr/bin/taskset", "-c", "0"))
+      on("/bin/taskset") mustBe Some(Seq("/bin/taskset", "-c", "0"))
+      on() mustBe None
+    }
+
+    it("starts the fork's java under the clamp, every argument passed through as one word") {
+      // The clamp here is a script that prints each word it was started with, so the line it prints
+      // is the clamp's own arguments, then java, then the fork's arguments.
+      val dir = Files.createTempDirectory("clamped-java")
+      try {
+        val tool = dir.resolve("clamp")
+        val java = dir.resolve("bin").resolve("java")
+        Files.write(tool, "#!/bin/sh\nprintf '%s|' \"$@\"\n".getBytes(StandardCharsets.UTF_8))
+        Files.createDirectories(java.getParent)
+        Files.write(java, CiTestLists.clampedJava(Seq(tool.toString, "it's"), "/jdk home/bin/java").getBytes)
+        tool.toFile.setExecutable(true) mustBe true
+        java.toFile.setExecutable(true) mustBe true
+        scala.sys.process.Process(Seq(java.toString, "-cp", "a b", "sbt.ForkMain")).!!.trim mustBe
+          "it's|/jdk home/bin/java|-cp|a b|sbt.ForkMain|"
+      } finally IO.delete(dir.toFile)
     }
 
     it("runs a proof 5 times alone and then 3 times beside its subproject") {
