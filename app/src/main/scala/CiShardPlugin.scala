@@ -12,7 +12,7 @@ import scala.util.control.NonFatal
 /** A split build's two halves in sbt (design DES-25567): the plan the build splits by, and the
   * narrowing a shard's runner runs its share with.
   *
-  * THE NARROWING. When `CI_SHARD_SUITES` names a file (`CiTestLists.ShardSuitesEnvVar` in lib-build), every test task
+  * THE NARROWING. When `CI_SHARD_SUITES` names a file (`CiTestLists.ShardSuitesEnvVar` in scala-build), every test task
   * of every subproject runs the suites it names and no others: a `Tests.Filter` here, on every
   * project as `CiTestListsPlugin`'s is, so a subproject that is not a Play app is narrowed too, and
   * in [[TestDatabasePlugin]] before a sharded subproject places its suites in its own forks.

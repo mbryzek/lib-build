@@ -9,7 +9,7 @@ import java.nio.file.{Files, Paths}
 import scala.collection.JavaConverters._
 
 /** sbt finds a library's AutoPlugins only through the `sbt/sbt.autoplugins` resource the library's
-  * jar carries. `lib-build-sbt` is published as a plain library rather than with `sbtPlugin := true`
+  * jar carries. `scala-build-sbt` is published as a plain library rather than with `sbtPlugin := true`
   * (whose `_2.12_1.0` artifact name the library release does not publish), so that resource is
   * written by hand, and a plugin left out of it compiles, publishes and is silently never enabled
   * in any consumer: no test-health filter, no rerun, and no `BryzekPins` in a build.sbt.
@@ -21,7 +21,7 @@ class AutoPluginDescriptorSpec extends AnyFunSpec with Matchers {
 
   private val listed: Seq[String] = {
     val in = getClass.getClassLoader.getResourceAsStream("sbt/sbt.autoplugins")
-    if (in == null) fail("lib-build-sbt carries no sbt/sbt.autoplugins resource")
+    if (in == null) fail("scala-build-sbt carries no sbt/sbt.autoplugins resource")
     try scala.io.Source.fromInputStream(in, "UTF-8").getLines().map(_.trim).filter(_.nonEmpty).toList
     finally in.close()
   }

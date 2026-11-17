@@ -7,7 +7,7 @@ import sbt._
 /** The build settings every lib-* repository shares: publishing metadata, the guava pin, the
   * browser-stack exclusions, the compiler gate and the root project's test reporting.
   *
-  * Published in `lib-build-sbt` and reached from a build.sbt as `BryzekLibSettings` through
+  * Published in `scala-build-sbt` and reached from a build.sbt as `BryzekLibSettings` through
   * [[BryzekBuildPlugin]]'s `autoImport`. Each build.sbt keeps what is its own -- `name`,
   * `version`, `scalaVersion`, which pins from [[BryzekPins]] apply to it, its dependencies and its
   * extras -- and wires the shared settings in:

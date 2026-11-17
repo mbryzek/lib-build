@@ -3,7 +3,7 @@ package com.bryzek.build
 import sbt._
 
 /** Puts [[BryzekPins]] and [[BryzekLibSettings]] in scope of every build.sbt that adds
-  * `lib-build-sbt` to its meta-build, under the names they have always had there, so a build.sbt
+  * `scala-build-sbt` to its meta-build, under the names they have always had there, so a build.sbt
   * that wrote `BryzekPins.jackson2` against a copy in its own `project/` reads the same against the
   * release.
   *
