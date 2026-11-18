@@ -22,7 +22,17 @@ class ForkSafeScalaTestFrameworkSpec extends AnyFunSpec with Matchers {
 
   import ForkSafeScalaTestFrameworkSpec.*
 
-  private val ShortTimeoutMillis = 2000L
+  /** The shim's `doneTimeoutMillis` here. Only a LOWER bound is ever asserted against it (the shim
+    * waited this long before unwedging), so nothing about a loaded machine can make it too short;
+    * every test that waits it out pays it in full, which is the whole of this suite's run time.
+    */
+  private val ShortTimeoutMillis = 200L
+
+  /** How long stock ScalaTest's `done()` is watched for releasing on its own. It blocks forever
+    * while the bug stands, and an upstream fix would return it in milliseconds, so a second tells
+    * the two apart without paying for more.
+    */
+  private val StockWatchMillis = 1000L
 
   /** How long a released join is given here. Deliberately far above the shipped
     * `UnwedgeGraceMillis`, and it is NOT a timing assertion: the join returns in milliseconds when
@@ -200,7 +210,7 @@ class ForkSafeScalaTestFrameworkSpec extends AnyFunSpec with Matchers {
       val blocked = new Thread(() => { val _ = runner.done() }, "stock-scalatest-done")
       blocked.setDaemon(true)
       blocked.start()
-      blocked.join(ShortTimeoutMillis * 2)
+      blocked.join(StockWatchMillis)
 
       try {
         // still parked on Thread.join, behind ServerSocket.accept
