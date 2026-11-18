@@ -27,7 +27,7 @@
 //     java agent `scala-build-app` attaches to every forked test JVM. Every dependency is
 //     `Provided`, so a suite exercises the consumer's own resolution.
 
-ThisBuild / version := "0.0.13"
+ThisBuild / version := "0.0.14"
 
 // Publishing coordinates and metadata, the guava pin and the browser-stack exclusions, from this
 // repository's own sources (project/build.sbt compiles `sbt/` into the meta-build). Named for the
