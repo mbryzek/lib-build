@@ -106,8 +106,7 @@ class ForkSafeExitAgentSpec extends AnyFunSpec with Matchers {
           // reported, so the two halves of this assertion are not racing each other.
           whileRunning = output => {
             await(output, StalledMarker)
-            server.setSoTimeout(ProcessTimeoutMillis.toInt)
-            server.accept().close()
+            hangUpOnEveryConnection(server)
           }
         )
 
@@ -263,10 +262,7 @@ class ForkSafeExitAgentSpec extends AnyFunSpec with Matchers {
         val run = runForkMain(
           port = server.getLocalPort,
           withAgent = true,
-          whileRunning = _ => {
-            server.setSoTimeout(ProcessTimeoutMillis.toInt)
-            server.accept().close()
-          }
+          whileRunning = _ => hangUpOnEveryConnection(server)
         )
 
         run.status mustBe ForkSafeExitAgent.ExitStatus
@@ -428,6 +424,28 @@ private object ForkSafeExitAgentSpec {
     * `ForkMain` dials, so the two cannot disagree about which address that is.
     */
   def sbtSideSocket(): ServerSocket = new ServerSocket(0, 50, InetAddress.getByName(null))
+
+  /** Accepts every connection `server` receives and closes it unread, until `server` is closed.
+    *
+    * The fork's own connection is the first: closing it is the EOF `ForkMain`'s
+    * `new ObjectInputStream` throws on. The agent's exit probe then dials the same port, and it has
+    * to be hung up on too: left in the backlog it waits out the probe's whole `ProbeTimeoutMillis`
+    * for a byte nothing will write, which was most of this suite's run time. A hang-up answers it at
+    * once, and no assertion here reads what the probe concluded. The server socket itself stays
+    * bound and listening, which the ownership lookup in the exit diagnostic depends on.
+    */
+  def hangUpOnEveryConnection(server: ServerSocket): Unit = {
+    val hangUp: Runnable = () =>
+      try {
+        while (!server.isClosed) server.accept().close()
+      } catch {
+        // `accept` throws once the test closes the server socket, which is how this ends.
+        case NonFatal(_) => ()
+      }
+    val thread = new Thread(hangUp, "fork-safe-exit-agent-spec-hang-up")
+    thread.setDaemon(true)
+    thread.start()
+  }
 
   /** A port nothing is listening on, which is the state a fork cannot connect to. Bound and
     * released rather than picked, so it is one the OS was willing to hand out on this machine, and
