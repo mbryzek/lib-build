@@ -22,8 +22,7 @@ import java.util.zip.CRC32
   * THE TIMINGS are the repository file `test-shards.txt` platform rewrites from what shards took
   * (design DES-94295, "How a build reads them"). A build's Prepare fetches the newest revision and
   * every shard the revision its build named, each into a file outside the checkout named by
-  * [[TimingsEnvVar]]; with that unset, the committed [[TimingsPath]] is read, as it is by a build
-  * on a runner whose devops does not fetch them yet.
+  * [[TimingsEnvVar]]; with that unset, there are no timings and suites are placed by hash.
   *
   * The same file carries each subproject's median START seconds, `start:<subproject> <seconds>`
   * ([[StartPrefix]]): what a forked test JVM of that subproject spends from its launch to its first
@@ -40,17 +39,14 @@ object TestShards {
   /** What the runner exports to every build: its cores and memory over its build slots. */
   val CountEnvVar: String = "CI_BUILD_SHARDS"
 
-  /** The repository-relative path of the committed timings, read when [[TimingsEnvVar]] names none. */
-  val TimingsPath: String = "ci/test-shards.txt"
-
   /** The fetched shard timings a build hands its planner and its shards: a file outside the checkout. */
   val TimingsEnvVar: String = "CI_SHARD_TIMINGS"
 
-  /** Where a build reads its timings: the file [[TimingsEnvVar]] names, else the committed [[TimingsPath]]
-    * under `root`. Pure, so the meta-build and a spec agree on it.
+  /** Where a build reads its timings: the file [[TimingsEnvVar]] names, or none, when the build plans by
+    * hash. Pure, so the meta-build and a spec agree on it.
     */
-  def timingsFile(env: Map[String, String], root: String): String =
-    env.get(TimingsEnvVar).map(_.trim).filter(_.nonEmpty).getOrElse(s"$root/$TimingsPath")
+  def timingsFile(env: Map[String, String]): Option[String] =
+    env.get(TimingsEnvVar).map(_.trim).filter(_.nonEmpty)
 
   /** The key a subproject's start seconds are listed under: `start:integrations`. */
   val StartPrefix: String = "start:"

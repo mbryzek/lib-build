@@ -109,23 +109,22 @@ object TestDatabasePlugin extends AutoPlugin {
     }
   }
 
-  /** The shard timings, or none: the fetched revision `CI_SHARD_TIMINGS` names, else the committed
-    * `ci/test-shards.txt` ([[TestShards.timingsFile]]). A file that is present but malformed fails the
-    * build rather than quietly falling back to hashing, which would be a balance nobody chose, and so
-    * does a fetched file that is named but missing: the build was handed a revision to plan and run on.
+  /** The shard timings, or none: the fetched revision `CI_SHARD_TIMINGS` names ([[TestShards.timingsFile]]),
+    * else none, and the suites are placed by hash. A file that is present but malformed fails the build
+    * rather than quietly falling back to hashing, which would be a balance nobody chose, and so does a
+    * named file that is missing: the build was handed a revision to plan and run on.
     */
-  def readTimings(root: File): Map[String, Double] = {
-    val fetched = sys.env.get(TestShards.TimingsEnvVar).exists(_.trim.nonEmpty)
-    val file = new File(TestShards.timingsFile(sys.env, root.getAbsolutePath))
-    if (!file.exists) {
-      if (fetched) sys.error(s"${TestShards.TimingsEnvVar} names $file, which does not exist")
-      Map.empty
-    } else
-      TestShards.parse(new String(Files.readAllBytes(file.toPath), StandardCharsets.UTF_8)) match {
-        case Right(timings) => timings
-        case Left(reason) => sys.error(s"$file: $reason")
-      }
-  }
+  def readTimings(): Map[String, Double] =
+    TestShards.timingsFile(sys.env) match {
+      case None => Map.empty
+      case Some(path) =>
+        val file = new File(path)
+        if (!file.exists) sys.error(s"${TestShards.TimingsEnvVar} names $file, which does not exist")
+        TestShards.parse(new String(Files.readAllBytes(file.toPath), StandardCharsets.UTF_8)) match {
+          case Right(timings) => timings
+          case Left(reason) => sys.error(s"$file: $reason")
+        }
+    }
 
   /** One forked test group per occupied shard, each told its own database, the session database to
     * clone it from as its fork starts, its name, and the file beside the suite reports its start seconds
@@ -200,7 +199,7 @@ object TestDatabasePlugin extends AutoPlugin {
           thisProject.value.id,
           tests,
           base,
-          readTimings((ThisBuild / baseDirectory).value),
+          readTimings(),
           target.value / "test-reports",
         )
     },
@@ -223,7 +222,7 @@ object TestDatabasePlugin extends AutoPlugin {
       // way of a one-line build change that looks unrelated. Read here and refused there.
       val forked = (Test / fork).value
       val tests = selected((Test / definedTests).value)
-      val timings = readTimings((ThisBuild / baseDirectory).value)
+      val timings = readTimings()
       val groups = (Test / testGrouping).value.size
       val lanes =
         if (!sharded(testShards.value)) Seq(subproject)
