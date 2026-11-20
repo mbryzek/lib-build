@@ -27,7 +27,7 @@ import scala.util.control.NonFatal
   * suite it defines, narrowed by every `Tests.Filter` and `Tests.Exclude` on that task, so the test
   * lists and the class-level selection leave out here exactly what they leave out of `test` — and
   * hands them to [[TestShards.plan]], weighted by the shard timings: the fetched revision `CI_SHARD_TIMINGS` names,
-  * else the committed `ci/test-shards.txt` ([[TestDatabasePlugin.readTimings]]).
+  * else none, placing suites by hash ([[TestDatabasePlugin.readTimings]]).
   *
   * It prints the plan's `ci-shard-plan:` lines, and writes `<file>` ([[TestShards.render]]) only when
   * the plan is a split, so a file that exists is the whole of what says "split". It reads every
@@ -118,7 +118,7 @@ object CiShardPlugin extends AutoPlugin {
                 val bySubproject = if (scope.isEmpty) found else TestShards.scoped(found, scope)
                 val out = file(path)
                 IO.delete(out)
-                val timings = TestDatabasePlugin.readTimings(extracted.get(ThisBuild / baseDirectory))
+                val timings = TestDatabasePlugin.readTimings()
                 val plan = TestShards.plan(bySubproject, timings, TestShards.sizing(sys.env))
                 plan match {
                   case split: TestShards.Split =>

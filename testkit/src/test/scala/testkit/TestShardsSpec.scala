@@ -55,11 +55,11 @@ class TestShardsSpec extends AnyFunSpec with Matchers {
   }
 
   describe("timingsFile") {
-    it("is the fetched file CI_SHARD_TIMINGS names, else the committed one under the root") {
-      TestShards.timingsFile(Map("CI_SHARD_TIMINGS" -> "/scratch/test-shards.txt"), "/repo") mustBe
-        "/scratch/test-shards.txt"
-      TestShards.timingsFile(Map.empty, "/repo") mustBe "/repo/ci/test-shards.txt"
-      TestShards.timingsFile(Map("CI_SHARD_TIMINGS" -> " "), "/repo") mustBe "/repo/ci/test-shards.txt"
+    it("is the fetched file CI_SHARD_TIMINGS names, else none") {
+      TestShards.timingsFile(Map("CI_SHARD_TIMINGS" -> "/scratch/test-shards.txt")) mustBe
+        Some("/scratch/test-shards.txt")
+      TestShards.timingsFile(Map.empty) mustBe None
+      TestShards.timingsFile(Map("CI_SHARD_TIMINGS" -> " ")) mustBe None
     }
   }
 
