@@ -4,13 +4,16 @@ import java.io.{File, ObjectInputStream, ObjectOutputStream}
 import java.net.{BindException, InetAddress, ServerSocket, Socket}
 import java.nio.charset.StandardCharsets.UTF_8
 import java.nio.file.{Files, Paths}
-import java.util.concurrent.TimeUnit
+import java.util.concurrent.{Executors, ThreadFactory, TimeUnit}
 import java.util.concurrent.atomic.AtomicReference
 import java.util.jar.{Attributes, JarEntry, JarOutputStream, Manifest as JarManifest}
 
+import org.scalatest.BeforeAndAfterAll
 import org.scalatest.funspec.AnyFunSpec
 import org.scalatest.matchers.must.Matchers
 
+import scala.concurrent.duration.*
+import scala.concurrent.{Await, ExecutionContext, Future}
 import scala.util.control.NonFatal
 
 /** Reproduces the ISS-3439 wedge against upstream's own code, and proves the agent closes it.
@@ -21,10 +24,90 @@ import scala.util.control.NonFatal
   * check. The sbt SIDE is modelled: it is four writes and a read
   * ([[ForkSafeExitAgentSpec.serveConfiguration]]), and the state that matters — a server socket
   * parked in `accept()` — is what you get by not writing them.
+  *
+  * Every real fork is STARTED in `beforeAll`, all of them at once, and each case only awaits the
+  * run it asserts on. A fork's cost is a JVM start plus, for every fork the agent acts on, an `lsof`
+  * walk of the whole machine, and both stretch with how loaded the runner is; run one after another
+  * they cost their sum, which is what put this suite on the slow list on a busy runner. Started
+  * together they cost the slowest one. They share nothing: each fork dials a port of its own, and
+  * every listening socket is bound before any closed port is picked, so no closed port can be one
+  * of them.
   */
-class ForkSafeExitAgentSpec extends AnyFunSpec with Matchers {
+class ForkSafeExitAgentSpec extends AnyFunSpec with Matchers with BeforeAndAfterAll {
 
   import ForkSafeExitAgentSpec.*
+
+  private val pool = Executors.newCachedThreadPool(daemonThreads)
+  private given ExecutionContext = ExecutionContext.fromExecutorService(pool)
+
+  private var sockets: Seq[ServerSocket] = Nil
+  private var served: Option[Thread] = None
+
+  private var unconnectedWithAgent: Future[Run] = scala.compiletime.uninitialized
+  private var unconnectedStock: Future[Run] = scala.compiletime.uninitialized
+  private var stalled: Future[(Int, Run)] = scala.compiletime.uninitialized
+  private var owned: Option[Future[(Int, Run)]] = None
+  private var configured: Future[Run] = scala.compiletime.uninitialized
+
+  override def beforeAll(): Unit = {
+    super.beforeAll()
+    val stalledServer = sbtSideSocket()
+    val ownedServer = sbtSideSocket()
+    val configuredServer = sbtSideSocket()
+    sockets = Seq(stalledServer, ownedServer, configuredServer)
+    served = Some(serveConfiguration(configuredServer))
+
+    // The slowest fork first: it waits out the stall threshold before anything else happens.
+    stalled = Future {
+      stalledServer.getLocalPort -> runForkMain(
+        port = stalledServer.getLocalPort,
+        withAgent = true,
+        agentArgs = s"${ForkSafeExitAgent.StallMillisArg}$StallMillis",
+        // Accepting the connection and closing THAT socket is the EOF `ForkMain`'s
+        // `new ObjectInputStream` throws on, and is what turns the stall into the silent throw
+        // its `finally { System.exit(0); }` discards. Closing the SERVER socket instead would
+        // rest on a listener close aborting a connection still sitting unaccepted in its
+        // backlog, which nothing requires it to do; where that abort does not arrive the fork
+        // stays parked and only this suite's own timeout ends it. Done once the stall has been
+        // reported, so the two halves of this assertion are not racing each other.
+        whileRunning = output => {
+          await(output, StalledMarker)
+          hangUpOnEveryConnection(stalledServer)
+        }
+      )
+    }
+    if (new File(ForkSafeExitAgent.LsofBinary).canExecute()) {
+      owned = Some(Future {
+        ownedServer.getLocalPort -> runForkMain(
+          port = ownedServer.getLocalPort,
+          withAgent = true,
+          whileRunning = _ => hangUpOnEveryConnection(ownedServer)
+        )
+      })
+    }
+    configured = Future(runForkMain(port = configuredServer.getLocalPort, withAgent = true))
+
+    // Picked only now, with every listener above already bound, so neither can be one of them.
+    val unconnectedPort = closedPort()
+    val stockPort = closedPort()
+    unconnectedWithAgent = Future(runForkMain(port = unconnectedPort, withAgent = true))
+    unconnectedStock = Future(runForkMain(port = stockPort, withAgent = false))
+  }
+
+  override def afterAll(): Unit =
+    try {
+      // Every fork is bounded by `runForkMain` itself; this only stops a case that failed before
+      // awaiting its own run from leaving that run behind.
+      Seq(stalled, configured, unconnectedWithAgent, unconnectedStock)
+        .++(owned)
+        .filter(_ != null)
+        .foreach(run => Await.ready(run, RunTimeout))
+      served.foreach(_.join(ProcessTimeoutMillis))
+      sockets.foreach(_.close())
+      pool.shutdownNow()
+    } finally super.afterAll()
+
+  private def result[T](run: Future[T]): T = Await.result(run, RunTimeout)
 
   /** Everything a stall report GUARANTEES about the position it sampled: a stack came out, and it
     * reaches `ForkMain`'s own frame.
@@ -57,7 +140,7 @@ class ForkSafeExitAgentSpec extends AnyFunSpec with Matchers {
     }
 
     it("makes a fork that could not dial sbt back exit non-zero, naming why") {
-      val run = runForkMain(port = closedPort(), withAgent = true)
+      val run = result(unconnectedWithAgent)
 
       run.status mustBe ForkSafeExitAgent.ExitStatus
       run.output must include("[fork-safe-exit-agent]")
@@ -68,7 +151,7 @@ class ForkSafeExitAgentSpec extends AnyFunSpec with Matchers {
     // polls sbt, so this assertion — that upstream still reports a fork that ran nothing as a
     // success — is the only thing that will notice the day it stops being true.
     it("is load-bearing: stock sbt.ForkMain reports that same failure as success") {
-      val run = runForkMain(port = closedPort(), withAgent = false)
+      val run = result(unconnectedStock)
 
       withClue(UpstreamMayBeFixed)(run.status mustBe 0)
     }
@@ -91,34 +174,16 @@ class ForkSafeExitAgentSpec extends AnyFunSpec with Matchers {
     // nothing was going to write. Every one of `ForkMain`'s three pre-run statements exits 86 the
     // same way, so the exit status cannot say which — the sampled stack can.
     it("names the statement a fork is stuck in, while it is stuck and again when it dies") {
-      val server = sbtSideSocket()
-      try {
-        val run = runForkMain(
-          port = server.getLocalPort,
-          withAgent = true,
-          agentArgs = s"${ForkSafeExitAgent.StallMillisArg}$StallMillis",
-          // Accepting the connection and closing THAT socket is the EOF `ForkMain`'s
-          // `new ObjectInputStream` throws on, and is what turns the stall into the silent throw
-          // its `finally { System.exit(0); }` discards. Closing the SERVER socket instead would
-          // rest on a listener close aborting a connection still sitting unaccepted in its
-          // backlog, which nothing requires it to do; where that abort does not arrive the fork
-          // stays parked and only this suite's own timeout ends it. Done once the stall has been
-          // reported, so the two halves of this assertion are not racing each other.
-          whileRunning = output => {
-            await(output, StalledMarker)
-            hangUpOnEveryConnection(server)
-          }
-        )
+      val (port, run) = result(stalled)
 
-        run.status mustBe ForkSafeExitAgent.ExitStatus
-        run.output must include(StalledMarker)
-        // The socket the configuration never arrived on, which is the other half of the diagnosis.
-        run.output must include(s"127.0.0.1:${server.getLocalPort}")
+      run.status mustBe ForkSafeExitAgent.ExitStatus
+      run.output must include(StalledMarker)
+      // The socket the configuration never arrived on, which is the other half of the diagnosis.
+      run.output must include(s"127.0.0.1:$port")
 
-        // Both reports carry the same sample, so both answer for it.
-        mustNameAStalledFork(run.output, StalledHeader)
-        mustNameAStalledFork(run.output, DiedHeader)
-      } finally server.close()
+      // Both reports carry the same sample, so both answer for it.
+      mustNameAStalledFork(run.output, StalledHeader)
+      mustNameAStalledFork(run.output, DiedHeader)
     }
 
     // The same claim without a fork, and why the check above is allowed to be structural: a
@@ -256,31 +321,22 @@ class ForkSafeExitAgentSpec extends AnyFunSpec with Matchers {
     // exits 75 there. Every other outcome still fails, including an accusation, a holder that is
     // not the parent, and no verdict at all.
     it("reports who held the port, from inside a real fork") {
-      assume(new File(ForkSafeExitAgent.LsofBinary).canExecute())
-      val server = sbtSideSocket()
-      try {
-        val run = runForkMain(
-          port = server.getLocalPort,
-          withAgent = true,
-          whileRunning = _ => hangUpOnEveryConnection(server)
-        )
+      assume(owned.isDefined, s"${ForkSafeExitAgent.LsofBinary} is not executable on this machine")
+      val (port, run) = result(owned.get)
 
-        run.status mustBe ForkSafeExitAgent.ExitStatus
-        run.output must not include ForkSafeExitAgent.HijackMarker
-        if (run.output.contains(ForkSafeExitAgent.LookupUnanswered)) {
-          cancel(
-            s"${ForkSafeExitAgent.LsofBinary} did not answer within the agent's " +
-              s"${ForkSafeExitAgent.OwnerTimeoutMillis}ms bound on this machine, so this run has no " +
-              s"ownership verdict to check. Output:\n${run.output}"
-          )
-        }
-        run.output must include("this fork's parent")
-        // The pid AND the address it was found on, rather than the pid alone: the diagnostic also
-        // prints an uptime and three heap figures, any of which can carry those digits.
-        run.output must include(
-          s"(pid ${ProcessHandle.current().pid}) on 127.0.0.1:${server.getLocalPort}"
+      run.status mustBe ForkSafeExitAgent.ExitStatus
+      run.output must not include ForkSafeExitAgent.HijackMarker
+      if (run.output.contains(ForkSafeExitAgent.LookupUnanswered)) {
+        cancel(
+          s"${ForkSafeExitAgent.LsofBinary} did not answer within the agent's " +
+            s"${ForkSafeExitAgent.OwnerTimeoutMillis}ms bound on this machine, so this run has no " +
+            s"ownership verdict to check. Output:\n${run.output}"
         )
-      } finally server.close()
+      }
+      run.output must include("this fork's parent")
+      // The pid AND the address it was found on, rather than the pid alone: the diagnostic also
+      // prints an uptime and three heap figures, any of which can carry those digits.
+      run.output must include(s"(pid ${ProcessHandle.current().pid}) on 127.0.0.1:$port")
     }
 
     it("leaves a fork that received its configuration alone") {
@@ -289,20 +345,13 @@ class ForkSafeExitAgentSpec extends AnyFunSpec with Matchers {
       // socket drags it in early. If a future JDK verified `Run.runTests` eagerly, the test above
       // would go red rather than this one: the agent would stop acting, which is the safe
       // direction, and this pair is what says which of the two happened.
-      val server = sbtSideSocket()
-      val served = serveConfiguration(server)
-      try {
-        val run = runForkMain(port = server.getLocalPort, withAgent = true)
+      val run = result(configured)
 
-        run.status mustBe 0
-        // Covers the watchdog as well as the hook: a fork that is configured in milliseconds ends
-        // the sampling loop and prints nothing, which is what makes this cheap enough to run in
-        // every forked test JVM in the build.
-        run.output must not include "[fork-safe-exit-agent]"
-      } finally {
-        served.join(ProcessTimeoutMillis)
-        server.close()
-      }
+      run.status mustBe 0
+      // Covers the watchdog as well as the hook: a fork that is configured in milliseconds ends
+      // the sampling loop and prints nothing, which is what makes this cheap enough to run in
+      // every forked test JVM in the build.
+      run.output must not include "[fork-safe-exit-agent]"
     }
   }
 }
@@ -312,6 +361,16 @@ private object ForkSafeExitAgentSpec {
   val ProcessTimeoutMillis: Long = 60000L
 
   val DrainTimeoutMillis: Long = 5000L
+
+  /** Past every bound `runForkMain` puts on one run, so a case awaiting its run never cuts it short. */
+  val RunTimeout: FiniteDuration = (2 * ProcessTimeoutMillis + 2 * DrainTimeoutMillis).millis
+
+  /** The forks' runners are daemons, so a suite that dies mid-run cannot hold its JVM open. */
+  val daemonThreads: ThreadFactory = (runnable: Runnable) => {
+    val thread = new Thread(runnable, "fork-safe-exit-agent-spec-fork")
+    thread.setDaemon(true)
+    thread
+  }
 
   /** What the spec drives the agent's stall report with, in place of its 30s default. */
   val StallMillis: Long = 1000L
