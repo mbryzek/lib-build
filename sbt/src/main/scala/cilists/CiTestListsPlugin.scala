@@ -11,8 +11,9 @@ import scala.util.control.NonFatal
   * Three things, all of them [[CiTestLists]] applied to sbt:
   *
   *   - a `Tests.Filter` on every subproject, so `test`, `testOnly` and `testQuick` leave out every
-  *     quarantined and slow spec, leave out nothing when the variable is unset, and with
-  *     `CI_SLOW_SPECS=1` run the slow specs alone;
+  *     quarantined and slow spec and every guard (a class ending in `GuardSpec`), leave out nothing
+  *     when the variable is unset, with `CI_SLOW_SPECS=1` run the slow specs alone, and with
+  *     `CI_GUARD_SPECS=1` run the guards alone ([[CiTestLists.runs]]);
   *   - `ciListsUnknown`, which prints `ci-lists: unknown <spec>` for a listed spec no subproject
   *     defines, and never fails, since the build script runs it ahead of `test` in one invocation;
   *   - `ciProof [<alone> <beside> [<clamped>]]`, which runs each `proof` spec `<alone>` times alone,
@@ -48,7 +49,9 @@ object CiTestListsPlugin extends AutoPlugin {
 
   import autoImport.*
 
-  private val slowOnly: Boolean = sys.env.get("CI_SLOW_SPECS").contains("1")
+  /** Read once per load, and an environment asking for two runs at once fails the load. */
+  private lazy val mode: CiTestLists.Mode =
+    CiTestLists.mode(sys.env).fold(reason => sys.error(reason), identity)
 
   /** Read once per load, and a file that cannot be read fails the load: a build told to run with
     * lists it cannot read must not run without them.
@@ -57,7 +60,8 @@ object CiTestListsPlugin extends AutoPlugin {
     val read = sys.env.get("CI_TEST_LISTS").filter(_.trim.nonEmpty).map { path =>
       CiTestLists.read(file(path)).fold(reason => sys.error(s"CI_TEST_LISTS=$path: $reason"), identity)
     }
-    if (slowOnly && read.isEmpty) sys.error("CI_SLOW_SPECS=1 runs only the slow specs and CI_TEST_LISTS names no lists")
+    if (mode == CiTestLists.Mode.SlowOnly && read.isEmpty)
+      sys.error("CI_SLOW_SPECS=1 runs only the slow specs and CI_TEST_LISTS names no lists")
     read
   }
 
@@ -66,7 +70,8 @@ object CiTestListsPlugin extends AutoPlugin {
     // filter reaches `test` and `testOnly` alike.
     testOptions += {
       val selected = lists
-      Tests.Filter(spec => CiTestLists.runs(selected, slowOnly, spec))
+      val run = mode
+      Tests.Filter(spec => CiTestLists.runs(selected, run, spec))
     },
     ciProjectSpecs := thisProject.value.id -> (Test / definedTestNames).value.toSet,
   )
@@ -139,6 +144,10 @@ object CiTestListsPlugin extends AutoPlugin {
       case (_, Left(reason)) =>
         println(s"ci-proof: $reason")
         state.fail
+      // The filter leaves every spec but the guards out of a guard run, and a guard is never proved.
+      case (_, Right(_)) if mode == CiTestLists.Mode.GuardOnly =>
+        println("ci-proof: a guard run proves nothing")
+        state
       case (None, _) =>
         println("ci-proof: no proof specs")
         state

@@ -53,35 +53,88 @@ class CiTestListsSpec extends AnyFunSpec with Matchers {
 
   describe("runs") {
 
+    import CiTestLists.Mode.{Build, GuardOnly, SlowOnly}
+
     it("leaves nothing out when there are no lists") {
-      CiTestLists.runs(None, slowOnly = false, "core.FlakySpec") mustBe true
+      CiTestLists.runs(None, Build, "core.FlakySpec") mustBe true
     }
 
     it("leaves out every quarantined and slow spec and runs the rest") {
-      CiTestLists.runs(Some(lists), slowOnly = false, "core.FlakySpec") mustBe false
-      CiTestLists.runs(Some(lists), slowOnly = false, "api.SlowSpec") mustBe false
-      CiTestLists.runs(Some(lists), slowOnly = false, "core.OrdinarySpec") mustBe true
+      CiTestLists.runs(Some(lists), Build, "core.FlakySpec") mustBe false
+      CiTestLists.runs(Some(lists), Build, "api.SlowSpec") mustBe false
+      CiTestLists.runs(Some(lists), Build, "core.OrdinarySpec") mustBe true
     }
 
     it("runs a proof spec in the build that proves it, whichever list also names it") {
       val both = lists.copy(quarantined = lists.quarantined + "core.FixedSpec", slow = lists.slow + "core.FixedSpec")
-      CiTestLists.runs(Some(lists), slowOnly = false, "core.FixedSpec") mustBe true
-      CiTestLists.runs(Some(both), slowOnly = false, "core.FixedSpec") mustBe true
+      CiTestLists.runs(Some(lists), Build, "core.FixedSpec") mustBe true
+      CiTestLists.runs(Some(both), Build, "core.FixedSpec") mustBe true
     }
 
     it("runs only the slow specs when asked for them") {
-      CiTestLists.runs(Some(lists), slowOnly = true, "api.SlowSpec") mustBe true
-      CiTestLists.runs(Some(lists), slowOnly = true, "core.OrdinarySpec") mustBe false
-      CiTestLists.runs(Some(lists), slowOnly = true, "core.FixedSpec") mustBe false
+      CiTestLists.runs(Some(lists), SlowOnly, "api.SlowSpec") mustBe true
+      CiTestLists.runs(Some(lists), SlowOnly, "core.OrdinarySpec") mustBe false
+      CiTestLists.runs(Some(lists), SlowOnly, "core.FixedSpec") mustBe false
     }
 
     it("keeps a quarantined spec out of the slow run too") {
       val both = lists.copy(quarantined = lists.quarantined + "api.SlowSpec")
-      CiTestLists.runs(Some(both), slowOnly = true, "api.SlowSpec") mustBe false
+      CiTestLists.runs(Some(both), SlowOnly, "api.SlowSpec") mustBe false
     }
 
     it("runs nothing when asked for the slow specs with no lists") {
-      CiTestLists.runs(None, slowOnly = true, "api.SlowSpec") mustBe false
+      CiTestLists.runs(None, SlowOnly, "api.SlowSpec") mustBe false
+    }
+
+    describe("guards") {
+
+      val guard = "core.helpers.SpecWaitBudgetGuardSpec"
+
+      it("runs every guard in a local sbt test, which has no lists") {
+        CiTestLists.runs(None, Build, guard) mustBe true
+      }
+
+      it("leaves every guard out of a build, whichever list names it") {
+        CiTestLists.runs(Some(lists), Build, guard) mustBe false
+        val named = lists.copy(proof = lists.proof + guard, slow = lists.slow + guard)
+        CiTestLists.runs(Some(named), Build, guard) mustBe false
+      }
+
+      it("runs the guards and nothing else in a guard run, with lists or without") {
+        Seq(None, Some(lists)).foreach { selected =>
+          CiTestLists.runs(selected, GuardOnly, guard) mustBe true
+          CiTestLists.runs(selected, GuardOnly, "core.OrdinarySpec") mustBe false
+          CiTestLists.runs(selected, GuardOnly, "api.SlowSpec") mustBe false
+          CiTestLists.runs(selected, GuardOnly, "core.FixedSpec") mustBe false
+        }
+      }
+
+      it("never runs a guard in the slow run, even one the slow list names") {
+        CiTestLists.runs(Some(lists.copy(slow = lists.slow + guard)), SlowOnly, guard) mustBe false
+      }
+
+      it("marks a guard by the GuardSpec suffix alone") {
+        CiTestLists.isGuard(guard) mustBe true
+        CiTestLists.isGuard("core.GuardSpecHelpersSpec") mustBe false
+        CiTestLists.isGuard("core.GuardSpecs") mustBe false
+      }
+    }
+  }
+
+  describe("mode") {
+
+    it("is a build with neither variable set, or with either set to anything but 1") {
+      CiTestLists.mode(Map.empty) mustBe Right(CiTestLists.Mode.Build)
+      CiTestLists.mode(Map("CI_SLOW_SPECS" -> "0", "CI_GUARD_SPECS" -> "")) mustBe Right(CiTestLists.Mode.Build)
+    }
+
+    it("is the slow run under CI_SLOW_SPECS=1 and the guard run under CI_GUARD_SPECS=1") {
+      CiTestLists.mode(Map("CI_SLOW_SPECS" -> "1")) mustBe Right(CiTestLists.Mode.SlowOnly)
+      CiTestLists.mode(Map("CI_GUARD_SPECS" -> "1")) mustBe Right(CiTestLists.Mode.GuardOnly)
+    }
+
+    it("refuses both at once") {
+      CiTestLists.mode(Map("CI_SLOW_SPECS" -> "1", "CI_GUARD_SPECS" -> "1")).isLeft mustBe true
     }
   }
 
@@ -101,6 +154,12 @@ class CiTestListsSpec extends AnyFunSpec with Matchers {
     it("pairs each proof spec with the subproject that defines it") {
       val defined = Map("api" -> Set("api.SlowSpec"), "core" -> Set("core.FixedSpec", "core.FlakySpec"))
       CiTestLists.proofPlan(lists, defined) mustBe Seq("core" -> "core.FixedSpec")
+    }
+
+    it("never plans a guard, which no build runs") {
+      val guarded = lists.copy(proof = lists.proof + "core.ShapeGuardSpec")
+      val defined = Map("core" -> Set("core.FixedSpec", "core.ShapeGuardSpec"))
+      CiTestLists.proofPlan(guarded, defined) mustBe Seq("core" -> "core.FixedSpec")
     }
 
     it("plans nothing for a proof spec no subproject defines") {

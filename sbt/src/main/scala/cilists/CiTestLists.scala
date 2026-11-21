@@ -4,7 +4,8 @@ import java.io.File
 import java.nio.charset.StandardCharsets
 import java.nio.file.Files
 
-/** The quarantined and slow specs a build runs with, and what a proof run's report says.
+/** The quarantined and slow specs a build runs with, the guards it leaves out, and what a proof
+  * run's report says.
   *
   * Platform holds the lists; whatever starts a build fetches them into a file and exports its path
   * as `CI_TEST_LISTS`. The file's first line is the lists version and every line after it is
@@ -159,18 +160,65 @@ object CiTestLists {
     if (file.isFile) parse(new String(Files.readAllBytes(file.toPath), StandardCharsets.UTF_8))
     else Left("no such file")
 
-  /** Whether a build runs `spec`.
-    *
-    * With no lists nothing is left out, which is how the session fixing a quarantined spec runs it.
-    * With lists, a quarantined spec and a slow spec are left out; `slowOnly` is `CI_SLOW_SPECS=1`
-    * and inverts that to the slow specs alone. A quarantined spec runs nowhere, so it stays out of
-    * the slow run too. A `proof` spec is one the build is about to prove, so its own build runs it.
+  /** What a test run runs, chosen by the environment ([[mode]]). */
+  sealed trait Mode
+  object Mode {
+
+    /** A build, or a local `sbt test`: every spec the lists do not leave out. */
+    case object Build extends Mode
+
+    /** `CI_SLOW_SPECS=1`, the nightly slow-spec run: the slow specs alone. */
+    case object SlowOnly extends Mode
+
+    /** `CI_GUARD_SPECS=1`, the daily guard run: the guards alone. */
+    case object GuardOnly extends Mode
+  }
+
+  val SlowSpecsEnvVar: String = "CI_SLOW_SPECS"
+
+  val GuardSpecsEnvVar: String = "CI_GUARD_SPECS"
+
+  /** The suffix that marks a spec a guard: a check of code shape that protects nothing a user meets.
+    * The name is the whole marking, so a spec becomes a guard, or stops being one, by its rename.
     */
-  def runs(lists: Option[Lists], slowOnly: Boolean, spec: String): Boolean =
-    lists match {
-      case None => !slowOnly
-      case Some(l) if slowOnly => l.slow(spec) && !l.quarantined(spec)
-      case Some(l) => l.proof(spec) || !(l.quarantined(spec) || l.slow(spec))
+  val GuardSuffix: String = "GuardSpec"
+
+  /** Whether `spec`, a suite's class name, is a guard. */
+  def isGuard(spec: String): Boolean = spec.endsWith(GuardSuffix)
+
+  /** The run `env` asks for. Both `CI_SLOW_SPECS=1` and `CI_GUARD_SPECS=1` is refused, naming both:
+    * each asks for its specs and nothing else, so together they ask for nothing.
+    */
+  def mode(env: Map[String, String]): Either[String, Mode] = {
+    val slow = env.get(SlowSpecsEnvVar).contains("1")
+    val guard = env.get(GuardSpecsEnvVar).contains("1")
+    if (slow && guard) Left(s"$SlowSpecsEnvVar=1 runs only the slow specs and $GuardSpecsEnvVar=1 only the guards")
+    else if (guard) Right(Mode.GuardOnly)
+    else if (slow) Right(Mode.SlowOnly)
+    else Right(Mode.Build)
+  }
+
+  /** Whether a run in `mode` runs `spec`.
+    *
+    * With no lists a build leaves nothing out, which is how the session fixing a quarantined spec
+    * runs it and how a local `sbt test` runs every guard. With lists, which is exactly a build's
+    * shards, a quarantined spec, a slow spec and every guard are left out. A `proof` spec is one the
+    * build is about to prove, so its own build runs it, unless it is a guard, which no build runs.
+    *
+    * [[Mode.SlowOnly]] runs the slow specs alone: a quarantined spec runs nowhere, so it stays out
+    * of the slow run too, and a guard never runs there. [[Mode.GuardOnly]] runs the guards alone,
+    * whatever the lists say: a guard is never quarantined or slow, and the guard run is the one
+    * place its failure is read.
+    */
+  def runs(lists: Option[Lists], mode: Mode, spec: String): Boolean =
+    mode match {
+      case Mode.GuardOnly => isGuard(spec)
+      case Mode.SlowOnly => !isGuard(spec) && lists.exists(l => l.slow(spec) && !l.quarantined(spec))
+      case Mode.Build =>
+        lists match {
+          case None => true
+          case Some(l) => !isGuard(spec) && (l.proof(spec) || !(l.quarantined(spec) || l.slow(spec)))
+        }
     }
 
   /** The listed specs no suite in the build matches, in a stable order. */
@@ -183,6 +231,8 @@ object CiTestLists {
     * ON ONE SHARD OF A SPLIT BUILD, ONLY THE SHARD'S OWN (ISS-48415). `shard` is the suites the
     * shard was handed ([[shardSuites]]): a proof spec another shard holds is proved there, and here
     * the shard's narrowing would leave its runs nothing to run and fail them for want of a report.
+    *
+    * A guard is never planned: no build runs one ([[runs]]), so its runs would leave no report.
     */
   def proofPlan(
     lists: Lists,
@@ -190,7 +240,7 @@ object CiTestLists {
     shard: Option[Set[String]] = None
   ): Seq[(String, String)] =
     for {
-      spec <- lists.proof.toSeq.sorted if shard.forall(_(spec))
+      spec <- lists.proof.toSeq.sorted if shard.forall(_(spec)) && !isGuard(spec)
       project <- definedByProject.toSeq.sortBy(_._1).collectFirst { case (id, specs) if specs(spec) => id }.toSeq
     } yield (project, spec)
 
