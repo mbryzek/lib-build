@@ -331,21 +331,31 @@ object TestShards {
   /** The planned seconds of the slowest of `shards`; 0 for none. */
   private def slowest(shards: Vector[Shard]): Double = if (shards.isEmpty) 0.0 else shards.map(_.seconds).max
 
-  /** `parts` onto at most `count` shards, longest first, each onto the least-loaded shard so far; the
-    * shards that hold any, longest first and numbered from 1.
+  /** `parts` onto at most `count` shards by [[pack]], numbered from 1. */
+  private def place(parts: Vector[Part], count: Int): Vector[Shard] =
+    pack(parts, count)(_.seconds, _.label).zipWithIndex.map { case (ps, i) => Shard(i + 1, ps) }
+
+  /** THE PACKING a split build places its parts with: `items` onto at most `count` shards, longest first (equal
+    * seconds in label order), each onto the least-loaded shard so far (equal loads onto the earliest). Answers the
+    * shards that hold any, longest first (equal totals in the order of their first labels), each holding its items
+    * longest first. It is greedy, not optimal: `3 3 2 2 2` into two packs `7` and `5`, not `6` and `6`.
+    *
+    * Platform re-splits past builds with a reimplementation of it to estimate a shard count (design ISS-119228,
+    * "The estimate"), so both are held to one case file, the `ci/shard-packing-cases` dry-copy region of
+    * `testkit/src/test/resources/shard_packing.cases`: a change here fails `TestShardsSpec` until the cases change,
+    * and `dev repo copies` reports every copy that has not followed.
     */
-  private def place(parts: Vector[Part], count: Int): Vector[Shard] = {
-    val placed = Array.fill(count)(Vector.empty[Part])
-    parts.sortBy(p => (-p.seconds, p.label)).foreach { part =>
-      val target = placed.indices.minBy(i => (placed(i).map(_.seconds).sum, i))
-      placed(target) = placed(target) :+ part
+  def pack[A](items: Vector[A], count: Int)(seconds: A => Double, label: A => String): Vector[Vector[A]] = {
+    def total(as: Vector[A]): Double = as.map(seconds).sum
+    val placed = Array.fill(count)(Vector.empty[A])
+    items.sortBy(a => (-seconds(a), label(a))).foreach { item =>
+      val target = placed.indices.minBy(i => (total(placed(i)), i))
+      placed(target) = placed(target) :+ item
     }
     placed.toVector
       .filter(_.nonEmpty)
-      .map(ps => ps.sortBy(p => (-p.seconds, p.label)))
-      .sortBy(ps => (-ps.map(_.seconds).sum, ps.head.label))
-      .zipWithIndex
-      .map { case (ps, i) => Shard(i + 1, ps) }
+      .map(as => as.sortBy(a => (-seconds(a), label(a))))
+      .sortBy(as => (-total(as), label(as.head)))
   }
 
   /** What a build's scope names to plan over (ISS-36226): `ciShardPlan`'s arguments after the plan file, as
