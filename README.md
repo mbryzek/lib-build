@@ -26,6 +26,9 @@ That brings, with nothing else to enable:
   on the root project.
 - `CiTestListsPlugin` and `CiTestRerunPlugin` on every project: the `CI_TEST_LISTS` filter on
   every test task, and the `ciListsUnknown`, `ciProof`, `ciTest` and `ciVerdict` commands.
+  Under `CI_TEST_LISTS` the filter also leaves out every guard, a class whose name ends in
+  `GuardSpec`; `CI_GUARD_SPECS=1` runs the guards and nothing else, `CI_SLOW_SPECS=1` never runs
+  one, and a local `sbt test` with neither set runs them.
 
 A build's whole test phase is one sbt start: `ciTest [--stop] [<subproject>...] [-- <subproject>...]`
 runs the named subprojects' tests (every subproject when none is named), reruns each failed spec once
