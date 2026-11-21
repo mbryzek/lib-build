@@ -1,0 +1,38 @@
+# dry-copy: ci/shard-packing-cases — scala-build's TestShards.pack and every reimplementation of it are held to these cases; `dev repo copies` checks every copy (ISS-120027)
+#
+# The greedy packing a split build places its parts with (scala-build's `TestShards.pack`), one case a line:
+#
+#   <label>=<seconds> ... | <shard count> | <labels of shard 1> ; <labels of shard 2> ...
+#
+# The items are placed longest first (equal seconds in label order), each onto the least-loaded shard
+# so far (equal loads onto the earliest). The expected shards are the ones that hold any, longest
+# first (equal totals in the order of their first labels), each listing its items longest first.
+# A blank line and a line starting with `#` hold no case.
+
+# One shard holds everything, longest first.
+a=1 b=2 c=3 | 1 | c b a
+
+# More shards than items: the shards left empty are not filed.
+a=5 b=3 | 4 | a ; b
+
+# Longest first, each onto the least-loaded shard; a tie in load goes to the earliest shard.
+a=300 b=200 c=100 d=100 | 2 | a d ; b c
+
+# Equal seconds are placed in label order.
+b=10 a=10 | 2 | a ; b
+
+# Shards of equal totals are ordered by their first labels, not by the order they were filled.
+z=5 a=3 b=2 | 2 | a b ; z
+
+# Greedy, not optimal: 3 3 2 2 2 packs 7 and 5, where 6 and 6 exists.
+a=3 b=3 c=2 d=2 e=2 | 2 | a c e ; b d
+
+# Fractional seconds.
+a=12.5 b=0.25 c=12.25 | 2 | a ; c b
+
+# A larger build: every shard receives work before any receives a second item.
+a=90 b=80 c=70 d=60 e=50 f=40 g=30 | 3 | a f g ; b e ; c d
+
+# An item of no seconds still lands on a shard, after every longer one.
+a=0 b=4 c=4 | 2 | b a ; c
+# dry-copy-end

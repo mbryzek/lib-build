@@ -193,6 +193,52 @@ class TestShardsSpec extends AnyFunSpec with Matchers {
     }
   }
 
+  describe("pack") {
+    // `<label>=<seconds> ... | <shard count> | <labels> ; <labels> ...`, one case a line (the file's own header).
+    final case class PackingCase(line: Int, items: Vector[(String, Double)], count: Int, shards: Vector[Vector[String]])
+
+    def words(text: String): Vector[String] = text.trim.split("\\s+").toVector.filter(_.nonEmpty)
+
+    def packingCase(line: Int, text: String): PackingCase = text.split("\\|", -1).toList match {
+      case items :: count :: shards :: Nil =>
+        PackingCase(
+          line,
+          words(items).map { item =>
+            item.split("=", 2).toList match {
+              case label :: seconds :: Nil => label -> seconds.toDouble
+              case _ => fail(s"line $line: `$item` is not `<label>=<seconds>`")
+            }
+          },
+          count.trim.toInt,
+          shards.split(";", -1).toVector.map(words)
+        )
+      case _ => fail(s"line $line is not `<items> | <shard count> | <shards>`: $text")
+    }
+
+    lazy val cases: Vector[PackingCase] = {
+      val stream = getClass.getClassLoader.getResourceAsStream("shard_packing.cases")
+      require(stream != null, "shard_packing.cases is not on the test classpath")
+      val text =
+        try new String(stream.readAllBytes(), java.nio.charset.StandardCharsets.UTF_8)
+        finally stream.close()
+      text.split("\n", -1).toVector.zipWithIndex.collect {
+        case (l, i) if l.trim.nonEmpty && !l.trim.startsWith("#") => packingCase(i + 1, l)
+      }
+    }
+
+    it("reads every case of the shared packing cases") {
+      cases.size must be >= 9
+    }
+
+    it("packs every case of the shared packing cases as the case expects") {
+      cases.foreach { c =>
+        withClue(s"shard_packing.cases line ${c.line}: ") {
+          TestShards.pack(c.items, c.count)(_._2, _._1).map(_.map(_._1)) mustBe c.shards
+        }
+      }
+    }
+  }
+
   describe("plan") {
     // Ten suites of 30 usual seconds in each named subproject.
     def subprojects(names: Seq[String]): Map[String, Seq[String]] =
